@@ -166,8 +166,8 @@ RunService.Heartbeat:Connect(function()
 				part.Size = newSize
 			end
 			
-			if part.Transparency ~= 0.5 then
-				part.Transparency = 0.5
+			if part.Transparency ~= 1 then
+				part.Transparency = 1
 			end
 			if part.CanCollide ~= false then
 				part.CanCollide = false
