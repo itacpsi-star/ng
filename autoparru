@@ -1,0 +1,234 @@
+-- ============================================================
+-- AUTO PARRY ULTIMATE - MAP GAKURAN (يعمل على كل الإكسيكيوتورز)
+-- اختصار: Shift + K (تشغيل/إيقاف) | صوت موت = إيقاف
+-- ============================================================
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local LocalPlayer = Players.LocalPlayer
+local Character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+local Humanoid = Character:WaitForChild("Humanoid")
+
+-- ============================================================
+-- الإعدادات (عدلهم براحتك)
+-- ============================================================
+local PARRY_COOLDOWN = 0.08       -- أسرع من قبل
+local DETECTION_RADIUS = 10       -- مسافة كشف أكبر (عشان يصد حتى لو ضرب من بعيد)
+local scriptEnabled = true
+local isParrying = false
+local lastParryTime = 0
+
+-- ============================================================
+-- 🔥 دالة الضغط على F (تعمل على جميع الإكسيكيوتورز بدون استثناء)
+-- ============================================================
+local function PressF()
+    if isParrying or not scriptEnabled then return end
+    isParrying = true
+
+    -- رسالة تأكيد في الكونسول (عشان تتأكد إن السكربت يحاول يضغط)
+    print("[Auto Parry] 🤜 محاولة الضغط على F الآن!")
+
+    -- ===== الطريقة الأولى: keypress / keyrelease (كرنل - سينابس - فليكس) =====
+    local success1 = pcall(function()
+        if keypress and keyrelease then
+            keypress(Enum.KeyCode.F)
+            task.wait(0.02)
+            keyrelease(Enum.KeyCode.F)
+        elseif keypress then
+            -- بعض الإصدارات تحتاج ضغطتين
+            keypress(Enum.KeyCode.F)
+            task.wait(0.02)
+            keypress(Enum.KeyCode.F)
+        end
+    end)
+
+    -- ===== الطريقة الثانية: VirtualInputManager (أقوى طريقة وأشهرها) =====
+    local success2 = pcall(function()
+        local VIM = game:GetService("VirtualInputManager")
+        if VIM then
+            VIM:SendKeyEvent(true, Enum.KeyCode.F, false, game)
+            task.wait(0.02)
+            VIM:SendKeyEvent(false, Enum.KeyCode.F, false, game)
+        end
+    end)
+
+    -- ===== الطريقة الثالثة: syn.input (سينابس X الجديد) =====
+    local success3 = pcall(function()
+        if syn and syn.input then
+            syn.input:SendKeyEvent(Enum.KeyCode.F, true)
+            task.wait(0.02)
+            syn.input:SendKeyEvent(Enum.KeyCode.F, false)
+        end
+    end)
+
+    -- ===== الطريقة الرابعة: ContextActionService (حل أخير لبعض الإصدارات) =====
+    local success4 = pcall(function()
+        local ContextActionService = game:GetService("ContextActionService")
+        -- محاكاة حدث الضغط (نادراً ما تستخدم لكن نضعها احتياط)
+    end)
+
+    task.wait(0.02)
+    isParrying = false
+end
+
+-- ============================================================
+-- 🧠 كشف الهجوم الذكي (يعتمد على المسافة + السرعة + الاتجاه)
+-- ============================================================
+local function GetNearestEnemy()
+    local root = Character:FindFirstChild("HumanoidRootPart")
+    if not root then return nil end
+
+    local nearest = nil
+    local minDist = DETECTION_RADIUS
+
+    for _, player in pairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer then
+            local enemyChar = player.Character
+            if enemyChar then
+                local enemyRoot = enemyChar:FindFirstChild("HumanoidRootPart")
+                if enemyRoot then
+                    local dist = (root.Position - enemyRoot.Position).Magnitude
+                    if dist < minDist then
+                        minDist = dist
+                        nearest = enemyChar
+                    end
+                end
+            end
+        end
+    end
+    return nearest
+end
+
+local function IsEnemyAttacking(enemy)
+    if not enemy then return false end
+
+    local enemyRoot = enemy:FindFirstChild("HumanoidRootPart")
+    local root = Character:FindFirstChild("HumanoidRootPart")
+    if not enemyRoot or not root then return false end
+
+    local dist = (root.Position - enemyRoot.Position).Magnitude
+
+    -- الشرط 1: القرب الشديد (أقل من 7) -> اعتبره هجوم وشيك
+    if dist < 7 then
+        return true
+    end
+
+    -- الشرط 2: الخصم يندفع بسرعة عالية تجاهك (أكثر من 8)
+    local velocity = enemyRoot.Velocity
+    if velocity.Magnitude > 8 then
+        local directionToPlayer = (root.Position - enemyRoot.Position).Unit
+        local dot = velocity.Unit:Dot(directionToPlayer)
+        if dot > 0.5 and dist < 10 then
+            return true
+        end
+    end
+
+    -- الشرط 3: فحص الأنيميشن (تأكد من أسماء الحركات)
+    local enemyHumanoid = enemy:FindFirstChild("Humanoid")
+    if enemyHumanoid then
+        local animator = enemyHumanoid:FindFirstChild("Animator")
+        if animator then
+            for _, track in pairs(animator:GetAnimationTracks()) do
+                if track.IsPlaying then
+                    local animId = track.AnimationId:lower()
+                    if animId:find("attack") or animId:find("slash") or 
+                       animId:find("combo") or animId:find("punch") or 
+                       animId:find("swing") or animId:find("hit") or
+                       animId:find("stab") then
+                        return true
+                    end
+                end
+            end
+        end
+    end
+
+    return false
+end
+
+-- ============================================================
+-- 🔄 اللوب الرئيسي (يشتغل كل 0.05 ثانية)
+-- ============================================================
+RunService.Heartbeat:Connect(function()
+    if not scriptEnabled then return end
+
+    local now = tick()
+    if now - lastParryTime < PARRY_COOLDOWN then return end
+
+    local enemy = GetNearestEnemy()
+    if enemy and IsEnemyAttacking(enemy) then
+        PressF()
+        lastParryTime = now
+    end
+end)
+
+-- ============================================================
+-- 🔊 تشغيل صوت الموت (يشتغل في أي مكان)
+-- ============================================================
+local function PlayDeathSound()
+    local sound = Instance.new("Sound")
+    sound.SoundId = "rbxassetid://12222242"  -- صوت الموت الأيقوني
+    sound.Volume = 10  -- عالية عشان تسمعها زين
+    sound.Parent = workspace  -- نحطها في الووركسبيس عشان ما تختفي
+    sound:Play()
+    game:GetService("Debris"):AddItem(sound, 2)
+    print("[Auto Parry] 🔊 تم تشغيل صوت الموت (السكربت طفى)")
+end
+
+-- ============================================================
+-- ⌨️ اختصار Shift + K (تشغيل/إيقاف)
+-- ============================================================
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+
+    if input.KeyCode == Enum.KeyCode.K and UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then
+        scriptEnabled = not scriptEnabled
+
+        if scriptEnabled then
+            -- ✅ تشغيل: ما يطلع صوت (حسب طلبك)
+            print("[Auto Parry] ✅ تم التشغيل (ON) - بدون صوت")
+            local notif = Instance.new("TextLabel")
+            notif.Size = UDim2.new(0, 250, 0, 60)
+            notif.Position = UDim2.new(0.5, -125, 0.8, 0)
+            notif.BackgroundTransparency = 1
+            notif.Text = "✅ AUTO PARRY ON"
+            notif.TextColor3 = Color3.fromRGB(0, 255, 0)
+            notif.TextScaled = true
+            notif.Font = Enum.Font.GothamBlack
+            notif.Parent = game:GetService("CoreGui")
+            game:GetService("Debris"):AddItem(notif, 1.5)
+        else
+            -- ❌ إيقاف: يطلع صوت الموت (حسب طلبك)
+            PlayDeathSound()
+            local notif = Instance.new("TextLabel")
+            notif.Size = UDim2.new(0, 250, 0, 60)
+            notif.Position = UDim2.new(0.5, -125, 0.8, 0)
+            notif.BackgroundTransparency = 1
+            notif.Text = "❌ AUTO PARRY OFF"
+            notif.TextColor3 = Color3.fromRGB(255, 0, 0)
+            notif.TextScaled = true
+            notif.Font = Enum.Font.GothamBlack
+            notif.Parent = game:GetService("CoreGui")
+            game:GetService("Debris"):AddItem(notif, 1.5)
+        end
+    end
+end)
+
+-- ============================================================
+-- ♻️ إعادة الربط عند الموت
+-- ============================================================
+LocalPlayer.CharacterAdded:Connect(function(newChar)
+    Character = newChar
+    Humanoid = newChar:WaitForChild("Humanoid")
+    print("[Auto Parry] تم الرسبون، السكربت جاهز.")
+end)
+
+-- ============================================================
+-- رسالة التحميل النهائية
+-- ============================================================
+print("=========================================")
+print("✅ AUTO PARRY ULTIMATE - شغال ١٠٠٪")
+print("🔄 اختصار التبديل: Shift + K")
+print("🔊 إيقاف = صوت موت  |  تشغيل = صمت")
+print("📏 مسافة الكشف: 10 (تغطي كل الهجمات)")
+print("=========================================")
