@@ -6,7 +6,7 @@ local player = Players.LocalPlayer
 local workspace = game:GetService("Workspace")
 
 local BALL_NAME = "Ball"
-local EXPAND_SIZE = 1.7  -- الحجم الثابت عند التفعيل
+local EXPAND_SIZE = 2.0  -- الحجم الثابت عند التفعيل
 
 local enabled = false
 local trackedBalls = {}
